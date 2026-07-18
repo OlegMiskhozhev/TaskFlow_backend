@@ -1,0 +1,32 @@
+name: taskflow-flow-test
+
+services:
+  flow_db_test:
+    image: postgres:14.0
+    environment:
+      POSTGRES_USER: ${FLOW_DB_USER}
+      POSTGRES_PASSWORD: ${FLOW_DB_PASSWORD}
+      POSTGRES_DB: ${FLOW_DB}
+    ports:
+      - "${FLOW_DB_PORT_HOST:-5435}:5432"
+    volumes:
+      - flow_test_data:/var/lib/postgresql/data
+
+  flow_tests:
+    build:
+      context: .
+      dockerfile: flow/Dockerfile
+    env_file:
+      - .env.test
+    environment:
+      FLOW_DB_HOST: flow_db_test
+      FLOW_DB_PORT: "5432"
+      PYTHONPATH: /srv/flow/app
+    depends_on:
+      - flow_db_test
+    volumes:
+      - .:/srv
+    working_dir: /srv
+
+volumes:
+  flow_test_data:

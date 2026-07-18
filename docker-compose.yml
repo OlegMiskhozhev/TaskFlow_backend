@@ -1,0 +1,127 @@
+name: taskflow
+
+volumes:
+  tasks_data:
+  flow_data:
+  minio:
+
+networks:
+  web:
+    external: true
+
+services:
+
+  minio:
+    container_name: minio
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    env_file: .env   
+    volumes:  
+      - minio:/data
+    command: server --console-address ":9001" /data
+    ports:
+      - 9000:9000
+      - 9001:9001
+    networks:
+      - web
+
+  redis:
+    container_name: redis
+    image: redis:7
+    restart: always
+    volumes:
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    ports:
+      - 6379:6379
+    networks:
+      - web
+
+  celeryworker:
+    container_name: celeryworker
+    build:
+      context: .
+      dockerfile: tasks/Dockerfile
+    env_file: .env
+    depends_on:
+      - redis
+      - tasks_db
+    command: celery -A beat.celery.celery_app worker -l INFO
+    networks:
+      - web
+  
+  celerybeat:
+    container_name: celerybeat
+    build:
+      context: .
+      dockerfile: tasks/Dockerfile
+    env_file: .env
+    depends_on:
+      - redis
+      - tasks_db
+    command: celery -A beat.celery.celery_app beat -l INFO
+    networks:
+      - web
+
+  tasks_db:
+    container_name: database
+    image: postgres:14.0
+    environment:
+      POSTGRES_USER: ${TASKS_DB_USER}
+      POSTGRES_PASSWORD: ${TASKS_DB_PASSWORD}
+      POSTGRES_DB: ${TASKS_DB}
+    volumes:
+      - tasks_data:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+    networks:
+      - web
+
+  flow_db:
+    container_name: flow_database
+    image: postgres:14.0
+    environment:
+      POSTGRES_USER: ${FLOW_DB_USER}
+      POSTGRES_PASSWORD: ${FLOW_DB_PASSWORD}
+      POSTGRES_DB: ${FLOW_DB}
+    volumes:
+      - flow_data:/var/lib/postgresql/data
+    ports:
+      - 5433:5432
+    networks:
+      - web
+
+  tasks_backend:
+    container_name: tasks_backend
+    build:
+      context: .
+      dockerfile: tasks/Dockerfile
+    env_file: .env
+    depends_on:
+      - tasks_db
+      - redis
+      - celeryworker
+      - celerybeat
+    networks:
+      - web
+
+  flow_backend:
+    container_name: flow_backend
+    build:
+      context: .
+      dockerfile: flow/Dockerfile
+    env_file: .env
+    depends_on:
+      - flow_db
+    networks:
+      - web
+
+  gateway:
+    container_name: proxy
+    build: ./gateway
+    depends_on:
+      - tasks_backend
+      - flow_backend
+    ports:
+      - 80:80
+    networks:
+      - web

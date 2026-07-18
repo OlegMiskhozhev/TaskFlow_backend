@@ -1,0 +1,32 @@
+name: taskflow-tasks-test
+
+services:
+  tasks_db_test:
+    image: postgres:14.0
+    environment:
+      POSTGRES_USER: ${TASKS_DB_USER}
+      POSTGRES_PASSWORD: ${TASKS_DB_PASSWORD}
+      POSTGRES_DB: ${TASKS_DB}
+    ports:
+      - "${TASKS_DB_PORT_HOST:-5436}:5432"
+    volumes:
+      - tasks_test_data:/var/lib/postgresql/data
+
+  tasks_tests:
+    build:
+      context: .
+      dockerfile: tasks/Dockerfile
+    env_file:
+      - .env.test
+    environment:
+      TASKS_DB_HOST: tasks_db_test
+      TASKS_DB_PORT: "5432"
+      PYTHONPATH: /srv/tasks/app
+    depends_on:
+      - tasks_db_test
+    volumes:
+      - .:/srv
+    working_dir: /srv
+
+volumes:
+  tasks_test_data:

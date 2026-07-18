@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Напоминание о задаче TaslFlow</title>
+</head>
+    <body>
+        <h2>Напоминание о задаче</h2>
+        <p>Здравствуйте!</p>
+        <p>Вы установили напоминание о задаче.</p>
+        <p>Детали задачи:</p>
+        <ul>
+            <li>Название: {{ task_name }}</li>
+            <li>Проект: {{ project_name }}</li>
+            <li>Срок выполнения: {{ task_deadline }}</li>
+        </ul>
+        <a href="{{ task_link }}">Ссылка на задачу</a>
+        <p>С уважением,</p>
+        <p>Команда TaskFlow</p>
+    </body>
+</html>

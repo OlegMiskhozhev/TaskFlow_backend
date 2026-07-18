@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Срок задачи истёк TaslFlow</title>
+</head>
+    <body>
+        <h2>Срок задачи истёк</h2>
+        <p>Здравствуйте!</p>
+        <p>Срок выполнения задачи истек.</p>
+        <p>Детали задачи:</p>
+        <ul>
+            <li>Название: {{ task_name }}</li>
+            <li>Проект: {{ project_name }}</li>
+            <li>Срок выполнения: {{ task_deadline }}</li>
+        </ul>
+        <p>Рекомендуем обновить статус или завершить задачу.</p>
+        <a href="{{ task_link }}">Ссылка на задачу</a>
+        <p>С уважением,</p>
+        <p>Команда TaskFlow</p>
+    </body>
+</html>
