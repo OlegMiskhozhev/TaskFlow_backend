@@ -6,6 +6,8 @@ __pycache__/
 
 .env
 .env.test
+.env.tasks
+.env.flow
 .venv
 .venv/
 .env/
@@ -27,3 +29,5 @@ build/
 
 **/logs/
 *.log
+
+*.http

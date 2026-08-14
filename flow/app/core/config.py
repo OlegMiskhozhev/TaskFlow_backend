@@ -3,9 +3,7 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-ENV_FILE_PATH = Path.cwd().parent / '.env'
 BASE_SETTINGS_CONFIG = SettingsConfigDict(
-    env_file=ENV_FILE_PATH,
     env_file_encoding='utf8',
     extra='ignore',
 )
@@ -16,21 +14,21 @@ class DatabaseSettings(BaseSettings):
 
     model_config = BASE_SETTINGS_CONFIG
 
-    FLOW_DB_USER: str
-    FLOW_DB_PASSWORD: str
-    FLOW_DB_HOST: str
-    FLOW_DB_PORT: int
-    FLOW_DB: str
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_PORT: int
+    POSTGRES_HOST: str = 'localhost'
 
     @property
     def db_url(self) -> str:
         """URL для подключения к базе данных."""
         return (
-            f'postgresql+asyncpg://{self.FLOW_DB_USER}:'
-            f'{self.FLOW_DB_PASSWORD}@'
-            f'{self.FLOW_DB_HOST}:'
-            f'{self.FLOW_DB_PORT}/'
-            f'{self.FLOW_DB}'
+            f'postgresql+asyncpg://{self.POSTGRES_USER}:'
+            f'{self.POSTGRES_PASSWORD}@'
+            f'{self.POSTGRES_HOST}:'
+            f'{self.POSTGRES_PORT}/'
+            f'{self.POSTGRES_DB}'
         )
 
 

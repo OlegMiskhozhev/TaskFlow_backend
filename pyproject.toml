@@ -148,3 +148,6 @@ dev = [
     "ruff (>=0.15.12,<0.16.0)",
     "mypy (>=2.0.0,<3.0.0)"
 ]
+
+[tool.uv]
+package = false

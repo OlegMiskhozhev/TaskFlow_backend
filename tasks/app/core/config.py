@@ -8,7 +8,6 @@ class CoreSettings(BaseSettings):
     """Базовый класс конфигурации проекта."""
 
     model_config = SettingsConfigDict(
-        env_file=os.path.join(Path.cwd().parent.parent, '.env'),
         env_file_encoding='utf8',
         extra='ignore',
     )
@@ -17,21 +16,21 @@ class CoreSettings(BaseSettings):
 class DatabaseSettings(CoreSettings):
     """Настройки конфигурации базы данных."""
 
-    TASKS_DB_USER: str
-    TASKS_DB_PASSWORD: str
-    TASKS_DB_HOST: str
-    TASKS_DB_PORT: int
-    TASKS_DB: str
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_PORT: int
+    POSTGRES_HOST: str = 'localhost'
 
     @property
     def db_url(self) -> str:
         """URL для подключения к базе данных."""
         return (
-            f'postgresql+asyncpg://{self.TASKS_DB_USER}:'
-            f'{self.TASKS_DB_PASSWORD}@'
-            f'{self.TASKS_DB_HOST}:'
-            f'{self.TASKS_DB_PORT}/'
-            f'{self.TASKS_DB}'
+            f'postgresql+asyncpg://{self.POSTGRES_USER}:'
+            f'{self.POSTGRES_PASSWORD}@'
+            f'{self.POSTGRES_HOST}:'
+            f'{self.POSTGRES_PORT}/'
+            f'{self.POSTGRES_DB}'
         )
 
 
@@ -47,7 +46,7 @@ class EmailSettings(CoreSettings):
 class MinioSettings(CoreSettings):
     """Настройки конфигурации доступа к хранилищу файлов."""
 
-    MINIO_URL: str
+    MINIO_URL: str = 'localhost:9000'
     MINIO_ROOT_USER: str
     MINIO_ROOT_PASSWORD: str
 
@@ -55,9 +54,9 @@ class MinioSettings(CoreSettings):
 class RedisSettings(CoreSettings):
     """Настройки конфигурации брокера сообщений Redis."""
 
-    REDIS_HOST: str
-    REDIS_PORT: int
-    REDIS_DB: int
+    REDIS_HOST: str = 'localhost'
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
 
     @property
     def redis_url(self) -> str:

@@ -4,10 +4,9 @@ volumes:
   tasks_data:
   flow_data:
   minio:
+  redis_data:
 
 networks:
-  web:
-    external: true
   internal_network:
     driver: bridge
 
@@ -20,12 +19,11 @@ services:
       - ./tasks/.env.tasks
     volumes:
       - minio:/data
+    command: server --console-address ":9001" /data
     ports:
       - "9000:9000"
       - "9001:9001"
-    command: server --console-address ":9001" /data
     networks:
-      - web
       - internal_network
 
   redis:
@@ -34,7 +32,10 @@ services:
     restart: always
     volumes:
       - ./redis.conf:/usr/local/etc/redis/redis.conf
+      - redis_data:/data
     command: redis-server /usr/local/etc/redis/redis.conf
+    ports:
+      - "6379:6379"
     networks:
       - internal_network
 
@@ -45,6 +46,8 @@ services:
       - ./tasks/.env.tasks
     volumes:
       - tasks_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
     networks:
       - internal_network
 
@@ -55,6 +58,8 @@ services:
       - ./flow/.env.flow
     volumes:
       - flow_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
     networks:
       - internal_network
 
@@ -90,50 +95,4 @@ services:
       - tasks_db
     command: celery -A beat.celery.celery_app beat -l INFO
     networks:
-      - internal_network
-
-  tasks_backend:
-    container_name: tasks_backend
-    build:
-      context: .
-      dockerfile: tasks/Dockerfile
-    env_file:
-      - ./tasks/.env.tasks
-    environment:
-      - POSTGRES_HOST=tasks_db
-      - REDIS_HOST=redis
-      - MINIO_URL=minio:9000
-    depends_on:
-      - tasks_db
-      - redis
-      - celeryworker
-      - celerybeat
-    networks:
-      - internal_network
-
-  flow_backend:
-    container_name: flow_backend
-    build:
-      context: .
-      dockerfile: flow/Dockerfile
-    env_file:
-      - ./flow/.env.flow
-    environment:
-      - POSTGRES_HOST=flow_db
-      - POSTGRES_PORT=5432
-    depends_on:
-      - flow_db
-    networks:
-      - internal_network
-
-  gateway:
-    container_name: proxy
-    build: ./gateway
-    depends_on:
-      - tasks_backend
-      - flow_backend
-    ports:
-      - "80:80"
-    networks:
-      - web
       - internal_network
