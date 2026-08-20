@@ -243,4 +243,4 @@ class TestMoveAndDeleteTaskUnit:
 
         kwargs = mock_delete.call_args.kwargs
         assert kwargs['model'] == Task
-        assert kwargs['id'] == 999
+        assert kwargs['obj_id'] == 999
