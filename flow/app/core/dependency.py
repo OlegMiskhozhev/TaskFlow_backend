@@ -1,21 +1,14 @@
 from typing import Annotated
 
-import httpx
+import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ValidationError
 
-from core.config import settings
+from .config import settings
 
 AUTH_ERROR_DETAIL = 'Invalid or expired access token'
 
 security = HTTPBearer(auto_error=False)
-
-
-class CurrentUserResponse(BaseModel):
-    """Минимальный ответ tasks с идентификатором текущего пользователя."""
-
-    id: int
 
 
 def _auth_error() -> HTTPException:
@@ -31,30 +24,25 @@ async def get_current_user_id(
         Depends(security),
     ],
 ) -> int:
-    """Проверяет access JWT в tasks и возвращает id текущего пользователя."""
+    """Верифицирует access JWT в памяти и возвращает id пользователя."""
     if token_data is None:
         raise _auth_error()
 
     try:
-        async with httpx.AsyncClient(
-            timeout=settings.TASKS_AUTH_TIMEOUT_SECONDS,
-        ) as client:
-            response = await client.get(
-                settings.TASKS_USER_ID_URL,
-                headers={'Authorization': f'Bearer {token_data.credentials}'},
-            )
-    except httpx.HTTPError as e:
+        payload = jwt.decode(
+            token_data.credentials,
+            settings.SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+
+        user_id = payload.get('user_id')
+        if user_id is None:
+            raise _auth_error()
+
+        return int(user_id)
+
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, ValueError) as e:
         raise _auth_error() from e
-
-    if response.status_code != status.HTTP_200_OK:
-        raise _auth_error()
-
-    try:
-        current_user = CurrentUserResponse.model_validate(response.json())
-    except (ValueError, ValidationError) as e:
-        raise _auth_error() from e
-
-    return current_user.id
 
 
 CurrentUserIdDependency = Annotated[int, Depends(get_current_user_id)]

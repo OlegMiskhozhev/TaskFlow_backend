@@ -8,6 +8,8 @@ __pycache__/
 .env.test
 .env.tasks
 .env.flow
+.env.tasks.test
+.env.flow.test
 .venv
 .venv/
 .env/
