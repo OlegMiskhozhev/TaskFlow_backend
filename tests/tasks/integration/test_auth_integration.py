@@ -120,7 +120,7 @@ class TestAuthFunctionsIntegration:
     async def test_create_token_pair_mocked(
         self, db_session, create_test_user_factory
     ):
-        """Интеграционный тест записи с моканием приватного кодировщика."""
+        """Интеграционный тест записи с подменой приватного кодировщика."""
         user = await create_test_user_factory(
             email='test@test.com', username='test_mocked', is_active=False
         )

@@ -1,16 +1,14 @@
-from unittest.mock import patch
-
 from fastapi import FastAPI, status
-from starlette.testclient import TestClient
+from fastapi.testclient import TestClient
 
 from core.middlewares import ContentTypeCheckMiddleware
 
 
 class TestContentTypeCheckMiddlewareUnit:
-    """Юнит-тесты сетевой мидлвари ContentTypeCheckMiddleware."""
+    """Юнит-тесты сетевого middleware ContentTypeCheckMiddleware."""
 
     def _create_app(self):
-        """Создаёт тестовое приложение со сквозной мидлварью."""
+        """Создаёт тестовое приложение со сквозным middleware."""
         app = FastAPI()
         app.add_middleware(ContentTypeCheckMiddleware)
 
@@ -49,10 +47,9 @@ class TestContentTypeCheckMiddlewareUnit:
         assert response.status_code == 200
         assert response.json() == {'message': 'attachments ok'}
 
-    @patch('core.middlewares.settings')
-    def test_avatar_route_size_exceeded_returns_413(self, mock_settings):
+    def test_avatar_route_size_exceeded_returns_413(self, mocker):
         """Тест: аватар тяжелее индивидуального лимита возвращает 413."""
-        # Мокаем конфигурационные лимиты в settings
+        mock_settings = mocker.patch('core.middlewares.settings')
         mock_settings.TOTAL_UPLOAD_LIMIT = 50 * 1024 * 1024
         mock_settings.FILE_ROUTES_CONFIG = {
             '/user/avatar': 2 * 1024 * 1024,
@@ -69,9 +66,9 @@ class TestContentTypeCheckMiddlewareUnit:
         assert response.status_code == status.HTTP_413_CONTENT_TOO_LARGE
         assert 'Файл превышает лимит 2 МБ' in response.text
 
-    @patch('core.middlewares.settings')
-    def test_attachments_route_size_exceeded_returns_413(self, mock_settings):
+    def test_attachments_route_size_exceeded_returns_413(self, mocker):
         """Тест: вложение тяжелее 10 МБ возвращает 413."""
+        mock_settings = mocker.patch('core.middlewares.settings')
         mock_settings.TOTAL_UPLOAD_LIMIT = 50 * 1024 * 1024
         mock_settings.FILE_ROUTES_CONFIG = {
             '/projects/attachments/': 10 * 1024 * 1024,
@@ -88,9 +85,9 @@ class TestContentTypeCheckMiddlewareUnit:
         assert response.status_code == status.HTTP_413_CONTENT_TOO_LARGE
         assert 'Файл превышает лимит 10 МБ' in response.text
 
-    @patch('core.middlewares.settings')
-    def test_global_total_limit_exceeded_returns_413(self, mock_settings):
+    def test_global_total_limit_exceeded_returns_413(self, mocker):
         """Тест: любой POST-запрос тяжелее 50 МБ блокируется."""
+        mock_settings = mocker.patch('core.middlewares.settings')
         mock_settings.TOTAL_UPLOAD_LIMIT = 50 * 1024 * 1024
         mock_settings.FILE_ROUTES_CONFIG = {}
 
@@ -104,3 +101,4 @@ class TestContentTypeCheckMiddlewareUnit:
         )
         assert response.status_code == status.HTTP_413_CONTENT_TOO_LARGE
         assert 'Размер запроса превышает допустимый предел' in response.text
+

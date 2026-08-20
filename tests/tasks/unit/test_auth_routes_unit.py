@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -18,20 +18,27 @@ from schemas.users import PasswordRequest, RecoveryRequest, RegisterRequest
 class TestRegisterUnit:
     """Юнит-тесты изолированной логики эндпоинта регистрации."""
 
-    @patch('routers.auth.get_user_by_email', new_callable=AsyncMock)
-    @patch('routers.auth.service.add', new_callable=AsyncMock)
-    @patch(
-        'services.auth.JwtService.create_confirmation_token',
-        new_callable=AsyncMock,
-    )
-    @patch('routers.auth.send_confirmation_email_task.delay')
-    async def test_register_new_user_success(
-        self, mock_email, mock_token, mock_add, mock_get_user
-    ):
+    async def test_register_new_user_success(self, mocker):
         """Тест: успешная регистрация нового активного пользователя."""
+        mock_get_user = mocker.patch(
+            'routers.auth.get_user_by_email',
+            new_callable=AsyncMock,
+        )
+        mock_add = mocker.patch(
+            'routers.auth.service.add',
+            new_callable=AsyncMock,
+        )
+        mock_token = mocker.patch(
+            'services.auth.JwtService.create_confirmation_token',
+            new_callable=AsyncMock,
+        )
+        mock_email = mocker.patch(
+            'routers.auth.send_confirmation_email_task.delay'
+        )
+
         mock_get_user.return_value = None
         mock_token.return_value = 'mock_confirm_token'
-        mock_add.return_value = Mock(id=1, is_active=False)
+        mock_add.return_value = mocker.Mock(id=1, is_active=False)
 
         request = RegisterRequest(
             email='new@test.com',
@@ -46,10 +53,13 @@ class TestRegisterUnit:
             'new@test.com', 'mock_confirm_token'
         )
 
-    @patch('routers.auth.get_user_by_email', new_callable=AsyncMock)
-    async def test_register_existing_active_user_fails(self, mock_get_user):
+    async def test_register_existing_active_user_fails(self, mocker):
         """Тест: существующий активный пользователь выдает 400 по ТЗ."""
-        mock_get_user.return_value = Mock(is_active=True)
+        mock_get_user = mocker.patch(
+            'routers.auth.get_user_by_email',
+            new_callable=AsyncMock,
+        )
+        mock_get_user.return_value = mocker.Mock(is_active=True)
 
         request = RegisterRequest(
             email='existing@test.com',
@@ -62,18 +72,25 @@ class TestRegisterUnit:
 
         assert exc.value.status_code == 400
 
-    @patch('routers.auth.get_user_by_email', new_callable=AsyncMock)
-    @patch('routers.auth.service.add', new_callable=AsyncMock)
-    @patch(
-        'services.auth.JwtService.create_confirmation_token',
-        new_callable=AsyncMock,
-    )
-    @patch('routers.auth.send_confirmation_email_task.delay')
-    async def test_register_inactive_user_creates_new_token(
-        self, mock_email, mock_token, mock_add, mock_get_user
-    ):
+    async def test_register_inactive_user_creates_new_token(self, mocker):
         """Тест: неактивный юзер получает новый токен без дублирования."""
-        mock_user = Mock(is_active=False, id=1)
+        mock_get_user = mocker.patch(
+            'routers.auth.get_user_by_email',
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            'routers.auth.service.add',
+            new_callable=AsyncMock,
+        )
+        mock_token = mocker.patch(
+            'services.auth.JwtService.create_confirmation_token',
+            new_callable=AsyncMock,
+        )
+        mock_email = mocker.patch(
+            'routers.auth.send_confirmation_email_task.delay'
+        )
+
+        mock_user = mocker.Mock(is_active=False, id=1)
         mock_get_user.return_value = mock_user
         mock_token.return_value = 'new_confirm_token'
 
@@ -94,22 +111,26 @@ class TestRegisterUnit:
 class TestLoginUnit:
     """Юнит-тесты изолированной логики эндпоинта аутентификации (Login)."""
 
-    @patch('routers.auth.get_user_by_email', new_callable=AsyncMock)
-    @patch(
-        'services.auth.AuthService.handle_login_attempt',
-        new_callable=AsyncMock,
-    )
-    @patch(
-        'services.auth.JwtService.create_token_pair', new_callable=AsyncMock
-    )
-    async def test_login_success(
-        self, mock_tokens, mock_handle, mock_get_user
-    ):
+    async def test_login_success(self, mocker):
         """Тест: успешный логин через диспетчер handle_login_attempt."""
-        mock_user = Mock(id=1, is_active=True, password='hashed_password')
+        mock_get_user = mocker.patch(
+            'routers.auth.get_user_by_email',
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            'services.auth.AuthService.handle_login_attempt',
+            new_callable=AsyncMock,
+        )
+        mock_tokens = mocker.patch(
+            'services.auth.JwtService.create_token_pair',
+            new_callable=AsyncMock,
+        )
+
+        mock_user = mocker.Mock(
+            id=1, is_active=True, password='hashed_password'
+        )
         mock_get_user.return_value = mock_user
 
-        # Мок возвращает словарь, который ручка успешно распакует
         mock_tokens.return_value = {
             'access_token': 'access123',
             'refresh_token': 'refresh123',
@@ -121,49 +142,59 @@ class TestLoginUnit:
         assert result.access_token == 'access123'
         assert result.refresh_token == 'refresh123'
 
-    @patch('routers.auth.get_user_by_email', new_callable=AsyncMock)
-    async def test_login_invalid_credentials(self, mock_get_user):
+    async def test_login_invalid_credentials(self, mocker) -> None:
         """Тест: неверные учетные данные выдают 400."""
+        mock_get_user = mocker.patch(
+            'routers.auth.get_user_by_email',
+            new_callable=AsyncMock,
+        )
         mock_get_user.return_value = None
 
         with pytest.raises(HTTPException) as exc:
             await login(email='wrong@test.com', password='wrong')
 
         assert exc.value.status_code == 400
-        assert exc.value.detail['msg'] == 'Неверный логин или пароль.'
+        assert exc.value.detail.get('msg') == 'Неверный логин или пароль.'
 
 
 @pytest.mark.asyncio
 class TestLogoutUnit:
-    """Юнит-тесты изолированной логики эндпоинта деаутентификации (Logout)."""
+    """Юнит-тесты изолированной логики выхода пользователя из системы.
 
-    @patch(
-        'services.auth.JwtService.get_token_by_access',
-        new_callable=AsyncMock,
-    )
-    @patch(
-        'services.auth.AuthService.deactivate_token_object',
-        new_callable=AsyncMock,
-    )
-    async def test_logout_success(self, mock_deactivate, mock_get_token):
+    Проверяет успешное аннулирование JWT-токена сессии (Logout)
+    и зачистку контекста авторизации в сетевом кэше.
+    """
+
+    async def test_logout_success(self, mocker):
         """Тест: успешный выход с деактивацией ORM-объекта Token."""
-        mock_token_obj = Mock(id=1)
+        mock_get_token = mocker.patch(
+            'services.auth.JwtService.get_token_by_access',
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            'services.auth.AuthService.deactivate_token_object',
+            new_callable=AsyncMock,
+        )
+
+        mock_token_obj = mocker.Mock(id=1)
         mock_get_token.return_value = mock_token_obj
 
-        result = await logout(user=Mock(), authorization='Bearer test_token')
+        result = await logout(
+            user=mocker.Mock(), authorization='Bearer test_token'
+        )
 
         assert result.status_code == 200
 
-    @patch(
-        'services.auth.JwtService.get_token_by_access',
-        new_callable=AsyncMock,
-    )
-    async def test_logout_no_token(self, mock_get_token):
+    async def test_logout_no_token(self, mocker):
         """Тест: выход с несуществующим токеном — все равно успех."""
+        mock_get_token = mocker.patch(
+            'services.auth.JwtService.get_token_by_access',
+            new_callable=AsyncMock,
+        )
         mock_get_token.return_value = None
 
         result = await logout(
-            user=Mock(), authorization='Bearer invalid_token'
+            user=mocker.Mock(), authorization='Bearer invalid_token'
         )
 
         assert result.status_code == 200
@@ -173,12 +204,16 @@ class TestLogoutUnit:
 class TestRecoveryPasswordUnit:
     """Юнит-тесты изолированной логики восстановления пароля."""
 
-    @patch('routers.auth.get_user_by_email', new_callable=AsyncMock)
-    @patch('routers.auth.send_password_reset_email_task.delay')
-    async def test_recovery_password_user_not_exists(
-        self, mock_email, mock_get_user
-    ):
+    async def test_recovery_password_user_not_exists(self, mocker):
         """Тест ТЗ: несуществующий пользователь вызывает ошибку 400."""
+        mock_get_user = mocker.patch(
+            'routers.auth.get_user_by_email',
+            new_callable=AsyncMock,
+        )
+        mock_email = mocker.patch(
+            'routers.auth.send_password_reset_email_task.delay'
+        )
+
         mock_get_user.return_value = None
         request = RecoveryRequest(email='nonexistent@test.com')
 
@@ -186,22 +221,28 @@ class TestRecoveryPasswordUnit:
             await recovery_password(request)
 
         assert exc.value.status_code == 400
-        assert exc.value.detail['msg'] == (
+
+        detail_dict = exc.value.detail
+        assert detail_dict.get('msg') == (
             'Пользователь с указанными данными не зарегистрирован.'
         )
         mock_email.assert_not_called()
 
-    @patch('routers.auth.get_user_by_email', new_callable=AsyncMock)
-    @patch(
-        'services.auth.JwtService.create_password_recovery_token',
-        new_callable=AsyncMock,
-    )
-    @patch('routers.auth.send_password_reset_email_task.delay')
-    async def test_recovery_password_success(
-        self, mock_email, mock_token, mock_get_user
-    ):
+    async def test_recovery_password_success(self, mocker):
         """Тест: успешная генерация токена сброса и отправка email."""
-        mock_user = Mock(id=1, is_active=True)
+        mock_get_user = mocker.patch(
+            'routers.auth.get_user_by_email',
+            new_callable=AsyncMock,
+        )
+        mock_token = mocker.patch(
+            'services.auth.JwtService.create_password_recovery_token',
+            new_callable=AsyncMock,
+        )
+        mock_email = mocker.patch(
+            'routers.auth.send_password_reset_email_task.delay'
+        )
+
+        mock_user = mocker.Mock(id=1, is_active=True)
         mock_get_user.return_value = mock_user
         mock_token.return_value = 'mock_recovery_token'
 
@@ -218,10 +259,17 @@ class TestRecoveryPasswordUnit:
 class TestResetPasswordUnit:
     """Юнит-тесты изолированной логики сброса пароля (Reset)."""
 
-    @patch('services.auth.CryptoService.hash_password', new_callable=AsyncMock)
-    @patch('routers.auth.service.update', new_callable=AsyncMock)
-    async def test_reset_password_success(self, mock_update, mock_hash):
+    async def test_reset_password_success(self, mocker):
         """Тест: успешная смена пароля."""
+        mock_hash = mocker.patch(
+            'services.auth.CryptoService.hash_password',
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            'routers.auth.service.update',
+            new_callable=AsyncMock,
+        )
+
         mock_hash.return_value = 'new_hashed_password'
 
         result = await reset_password(
@@ -229,7 +277,7 @@ class TestResetPasswordUnit:
                 password='NewTest123!^*Test',
                 confirm_password='NewTest123!^*Test',
             ),
-            user=Mock(id=1),
+            user=mocker.Mock(id=1),
         )
 
         assert result.status_code == 200
@@ -239,28 +287,27 @@ class TestResetPasswordUnit:
 class TestRefreshTokenUnit:
     """Юнит-тесты изолированной логики эндпоинта обновления токенов."""
 
-    @patch(
-        'services.auth.JwtService.verify_token_payload',
-        new_callable=AsyncMock,
-    )
-    @patch(
-        'services.auth.JwtService.get_token_by_refresh',
-        new_callable=AsyncMock,
-    )
-    @patch(
-        'services.auth.AuthService.deactivate_token_object',
-        new_callable=AsyncMock,
-    )
-    @patch(
-        'services.auth.JwtService.create_token_pair',
-        new_callable=AsyncMock,
-    )
-    async def test_refresh_token_success(
-        self, mock_create, mock_deactivate, mock_get_token, mock_verify
-    ):
+    async def test_refresh_token_success(self, mocker):
         """Тест: активный токен — деактивация и выдача новой пары."""
+        mock_verify = mocker.patch(
+            'services.auth.JwtService.verify_token_payload',
+            new_callable=AsyncMock,
+        )
+        mock_get_token = mocker.patch(
+            'services.auth.JwtService.get_token_by_refresh',
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            'services.auth.AuthService.deactivate_token_object',
+            new_callable=AsyncMock,
+        )
+        mock_create = mocker.patch(
+            'services.auth.JwtService.create_token_pair',
+            new_callable=AsyncMock,
+        )
+
         mock_verify.return_value = True
-        mock_token_obj = Mock(id=1, user_id=2, is_active=True)
+        mock_token_obj = mocker.Mock(id=1, user_id=2, is_active=True)
         mock_get_token.return_value = mock_token_obj
 
         # Передаем словарь под распаковку **tokens_data в ручке
@@ -275,15 +322,16 @@ class TestRefreshTokenUnit:
         assert result.access_token == 'new_access'
         assert result.refresh_token == 'new_refresh'
 
-    @patch(
-        'services.auth.JwtService.verify_token_payload',
-        new_callable=AsyncMock,
-    )
-    async def test_refresh_token_invalid_signature(self, mock_verify):
+    async def test_refresh_token_invalid_signature(self, mocker):
         """Тест: невалидная подпись токена выдает 410 по вашему ТЗ."""
+        mock_verify = mocker.patch(
+            'services.auth.JwtService.verify_token_payload',
+            new_callable=AsyncMock,
+        )
         mock_verify.side_effect = HTTPException(status_code=401)
 
         with pytest.raises(HTTPException) as exc:
             await update_tokens(refresh_token='invalid_signature')
 
         assert exc.value.status_code == 401
+
