@@ -47,7 +47,7 @@ class TestAttachmentsIntegration:
         create_test_task_factory,
         create_attachment_factory,
     ):
-        """Тест: успешное линкование вложений к задаче в СУБД."""
+        """Тест: успешная привязка вложений к задаче в СУБД."""
         task = await create_test_task_factory(test_user)
         att1 = await create_attachment_factory()
         att2 = await create_attachment_factory()
@@ -94,7 +94,7 @@ class TestAttachmentsIntegration:
             await attach_attachments_to_task(task, [99999])
 
         assert exc.value.status_code == status.HTTP_404_NOT_FOUND
-        assert exc.value.detail['field'] == 'attachment_id'
+        assert exc.value.detail['field'] == 'attachment_id'  # type: ignore
 
     async def test_remove_attachment_success(
         self, db_session, create_attachment_factory

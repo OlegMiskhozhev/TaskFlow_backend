@@ -1,14 +1,15 @@
 import sys
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from datetime import date
+from functools import partial
 from pathlib import Path
-from typing import Any, cast
 
 import pytest
 import pytest_asyncio
 from fastapi import FastAPI, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -16,7 +17,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
+# Корректировка путей для бесшовного импорта модулей из корня проекта
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 FLOW_APP_DIR = ROOT_DIR / 'flow' / 'app'
 
 if str(FLOW_APP_DIR) not in sys.path:
@@ -27,39 +29,68 @@ from core.dependency import get_current_user_id  # noqa: E402
 from database.db import Base  # noqa: E402
 from models.flow import Note  # noqa: E402
 from routers.core import core_router  # noqa: E402
+from tests.infra_service import DockerSubprocessInfraService  # noqa: E402
+
+# Синглтон инфраструктурного менеджера домена Flow
+flow_infra = DockerSubprocessInfraService(
+    container_name='flow_db_test',
+    env_file_path='./tests/flow/.env.flow.test',
+    host_port=5435,
+)
 
 
-def _flow_app_with_user_resolver(get_user_id: Callable[[], int]) -> FastAPI:
-    application = FastAPI()
-    application.include_router(core_router)
-    overrides = cast(
-        dict[Callable[..., Any], Callable[..., Any]],
-        application.dependency_overrides,  # type: ignore[attr-defined]
-    )
-    overrides[get_current_user_id] = get_user_id
-    return application
+# =============================================================================
+# 🐳 ZONE 1: РАБОТА С СИСТЕМНЫМИ ХУКАМИ И ЖИЗНЕННЫМ ЦИКЛОМ DOCKER
+# =============================================================================
 
 
-@pytest_asyncio.fixture
-async def manage_db():
-    yield
+def pytest_sessionstart(
+        session: pytest.Session  # noqa: ARG001
+) -> None:
+    """Глобальный хук инициализации тестовой сессии.
+
+    Гарантированно разворачивает изолированный контейнер СУБД ДО
+    начала сборки тестов и запуска асинхронных циклов.
+    """
+    flow_infra.start_infra()
 
 
-@pytest_asyncio.fixture
-async def db_engine(manage_db):
-    engine = create_async_engine(db_module.settings.db_settings.db_url)
+def pytest_sessionfinish(
+        session: pytest.Session,  # noqa: ARG001
+        exitstatus: int  # noqa: ARG001
+) -> None:
+    """Глобальный хук завершения тестовой сессии.
+
+    Обеспечивает гарантированную очистку ресурсов хост-машины и
+    удаление тестового контейнера после выполнения всех проверок.
+    """
+    flow_infra.stop_infra()
+
+
+
+# =============================================================================
+# 🗄️ ZONE 2: ИНИЦИАЛИЗАЦИЯ СУБД, ЖИЗНЕННЫЙ ЦИКЛ ТАБЛИЦ И СЕССИЙ
+# =============================================================================
+
+
+@pytest_asyncio.fixture(scope='session')
+async def db_engine():
+    """Инициализация асинхронного движка SQLAlchemy и генерация DDL."""
+    engine = create_async_engine(flow_infra.get_db_url())
+
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(partial(Base.metadata.create_all))
 
     yield engine
 
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.drop_all)
+        await connection.run_sync(partial(Base.metadata.drop_all))
     await engine.dispose()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope='session')
 async def test_session_maker(db_engine):
+    """Создание сессионной фабрики для генерации транзакций."""
     maker = async_sessionmaker(
         bind=db_engine,
         class_=AsyncSession,
@@ -68,9 +99,45 @@ async def test_session_maker(db_engine):
     return maker
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def mock_session_maker(test_session_maker):
+    """Глобальный перехватчик фабрики сессий бизнес-логики приложения."""
+    original_session_maker = db_module.async_session_maker
+    db_module.async_session_maker = test_session_maker
+    try:
+        yield
+    finally:
+        db_module.async_session_maker = original_session_maker
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clean_database_tables(test_session_maker):
+    """Принудительная очистка таблиц перед каждым тест-кейсом.
+
+    Обеспечивает стерильность базы данных между тестами, предотвращая
+    эффект накопления данных прошлых сессий выполнения.
+    """
+    async with test_session_maker() as session:
+        await session.execute(text('DELETE FROM notes;'))
+        await session.commit()
+    yield
+
+
+@pytest_asyncio.fixture
+async def async_session_no_transaction(test_session_maker):
+    """Предоставление чистой асинхронной сессии для фабрик тестов."""
+    async with test_session_maker() as session:
+        yield session
+
+
+# =============================================================================
+# 🧬 ZONE 3: МОКИРОВАНИЕ, МОНКИПАЙТЧИНГ И ПЕРЕХВАТ ПОВЕДЕНИЯ СУБД
+# =============================================================================
+
+
 @pytest.fixture
 def force_commit_failure(monkeypatch: pytest.MonkeyPatch):
-    """Точечно подменяет AsyncSession.commit на SQLAlchemyError."""
+    """Точечно подменяет AsyncSession.commit на ошибку SQLAlchemyError."""
 
     def _activate() -> None:
         async def _fail_commit(_self) -> None:  # noqa: ANN001
@@ -81,35 +148,30 @@ def force_commit_failure(monkeypatch: pytest.MonkeyPatch):
     return _activate
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def mock_session_maker(test_session_maker):
-    original_session_maker = db_module.async_session_maker
-    db_module.async_session_maker = test_session_maker
-    try:
-        yield
-    finally:
-        db_module.async_session_maker = original_session_maker
+# =============================================================================
+# 🌐 ZONE 4: ИНИЦИАЛИЗАЦИЯ FASTAPI ПРИЛОЖЕНИЯ И HTTP-КЛИЕНТОВ (HTTPX)
+# =============================================================================
 
 
-@pytest_asyncio.fixture
-async def async_session_no_transaction(test_session_maker):
-    async with test_session_maker() as session:
-        yield session
+def _flow_app_with_user_resolver(get_user_id: Callable[[], int]) -> FastAPI:
+    """Фабрика создания тестового инстанса приложения с подменой юзера."""
+    application = FastAPI()
+    application.include_router(core_router)
+    application.dependency_overrides[get_current_user_id] = get_user_id
+    return application
 
 
 @pytest_asyncio.fixture
 async def app():
+    """Фикстура изолированного инстанса FastAPI с дефолтным юзером."""
     application = _flow_app_with_user_resolver(lambda: 1)
-    overrides = cast(
-        dict[Callable[..., Any], Callable[..., Any]],
-        application.dependency_overrides,  # type: ignore[attr-defined]
-    )
     yield application
-    overrides.clear()
+    application.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture
 async def test_client(app: FastAPI):
+    """Асинхронный HTTP-клиент для авторизованных интеграционных тестов."""
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport, base_url='http://testserver'
@@ -118,7 +180,9 @@ async def test_client(app: FastAPI):
 
 
 @pytest_asyncio.fixture
-async def unauthorized_test_client() -> AsyncClient:
+async def unauthorized_test_client() -> AsyncGenerator[AsyncClient, None]:
+    """Асинхронный HTTP-клиент для эмуляции неавторизованных запросов."""
+
     def _raise_unauthorized() -> int:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -126,35 +190,43 @@ async def unauthorized_test_client() -> AsyncClient:
         )
 
     application = _flow_app_with_user_resolver(_raise_unauthorized)
-    overrides = cast(
-        dict[Callable[..., Any], Callable[..., Any]],
-        application.dependency_overrides,  # type: ignore[attr-defined]
-    )
     transport = ASGITransport(app=application)
+
     async with AsyncClient(
         transport=transport, base_url='http://testserver'
     ) as client:
         yield client
-    overrides.clear()
+
+    # 🚀 ИСПРАВЛЕНО: Чистим оверрайды напрямую без лишнего cast
+    application.dependency_overrides.clear()
+
+
+# =============================================================================
+# 🎭 ZONE 5: ДАННЫЕ, ДЕФОЛТНЫЕ СТАТИЧЕСКИЕ СУЩНОСТИ И ТЕСТОВЫЕ ФАБРИКИ
+# =============================================================================
 
 
 @pytest.fixture
 def notes_api_prefix() -> str:
+    """Базовый префикс роутера заметок."""
     return '/notes'
 
 
 @pytest.fixture
 def own_user_id() -> int:
+    """Идентификатор текущего владельца сущностей."""
     return 1
 
 
 @pytest.fixture
 def foreign_user_id() -> int:
+    """Идентификатор стороннего пользователя (проверка изоляции)."""
     return 2
 
 
 @pytest.fixture
 def auth_token() -> HTTPAuthorizationCredentials:
+    """Шаблон валидных метаданных авторизации."""
     return HTTPAuthorizationCredentials(
         scheme='Bearer',
         credentials='test-access-token',
@@ -163,6 +235,8 @@ def auth_token() -> HTTPAuthorizationCredentials:
 
 @pytest_asyncio.fixture
 async def note_factory(async_session_no_transaction: AsyncSession):
+    """Фабрика для быстрой генерации сущностей Note в БД."""
+
     async def _create_note(
         *,
         user_id: int,

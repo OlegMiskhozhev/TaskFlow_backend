@@ -3,15 +3,14 @@
 from datetime import date
 
 import pytest
-from pydantic import ValidationError
-
-from schemas.flow import (
+from flow.app.schemas.flow import (
     MAX_NOTE_CONTENT_LENGTH,
     CalendarNoteDate,
     NoteCreate,
     NoteStatusUpdate,
     NoteUpdate,
 )
+from pydantic import ValidationError
 
 
 @pytest.fixture

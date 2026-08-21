@@ -3,13 +3,8 @@
 from datetime import date
 
 import pytest
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
-from models.flow import Note
-from schemas.flow import NoteCreate, NoteStatusUpdate, NoteUpdate
-from services.flow import (
+from flow.app.schemas.flow import NoteCreate, NoteStatusUpdate, NoteUpdate
+from flow.app.services.flow import (
     add_object,
     create_note,
     delete_note,
@@ -20,6 +15,11 @@ from services.flow import (
     update_note,
     update_note_status,
 )
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from models.flow import Note
 
 
 @pytest.mark.asyncio
@@ -315,7 +315,7 @@ async def test_update_note_status_handles_own_foreign_and_missing(
     foreign_user_id: int,
 ) -> None:
     """
-    Проверяет смену статуса и сценарии своя/чужая/нет для update_note_status.
+    Проверяет смену статуса и сценарии свой/чужой/нет для update_note_status.
     """
     own = await note_factory(
         user_id=own_user_id,

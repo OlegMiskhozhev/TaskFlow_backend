@@ -16,7 +16,7 @@ class TestTagsServiceIntegration:
         create_custom_task_factory,
         create_test_tag_factory,
     ):
-        """Тест: успешное линкование и мутация M2M связей тегов."""
+        """Тест: успешное прикрепление и обновление M2M-связей тегов."""
         task = await create_custom_task_factory(test_user)
 
         tag1 = await create_test_tag_factory(test_user.id, 'tag1')

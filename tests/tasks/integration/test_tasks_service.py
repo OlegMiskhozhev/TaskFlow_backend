@@ -13,7 +13,8 @@ class TestTasksServiceIntegration:
     async def test_model_validate_and_timezone(
         self, db_session, test_user, create_custom_task_factory
     ):
-        """Тест: валидация схемы TaskDetail и проброс таймзоны юзера."""
+        """Тест: проверка схемы TaskDetail, учёт таймзоны пользователя."""
+
         task_orm = await create_custom_task_factory(test_user)
 
         # Жадно подгружаем связи для Pydantic, предотвращая MissingGreenlet
@@ -59,13 +60,13 @@ class TestTasksServiceIntegration:
         res = await db_session.execute(stmt)
         task_orm = res.scalar_one()
 
-        # Безопасно аппендим вложение в ОЗУ, сокеты не задействуются
+        # Добавляем связь с вложением на уровне ORM и фиксируем транзакцию
         task_orm.attachments.append(attachment)
         await db_session.commit()
 
         db_session.expunge_all()
 
-        # Вызываем ваш реальный сервисный метод пакетного формирования ссылок
+        # Вызываем сервисный метод пакетного формирования ссылок
         result = await get_task_detail(task_orm)
 
         assert result is not None

@@ -166,7 +166,7 @@ async def confirm_registration(
     token: Annotated[str, Header()],
 ) -> Message:
     payload = await auth_service.jwt.verify_token_payload(token, 'confirm')
-    user: User = await service.get(model=User, id=payload['user_id'])
+    user: User = await service.get(model=User, obj_id=payload['user_id'])
 
     if not user or user.is_active:
         raise HTTPException(
@@ -252,7 +252,7 @@ async def confirm_recovery_password(
     payload = await auth_service.jwt.verify_token_payload(
         token, 'password_recovery'
     )
-    user: User = await service.get(model=User, id=payload['user_id'])
+    user: User = await service.get(model=User, obj_id=payload['user_id'])
 
     if not user or not user.is_active:
         raise HTTPException(

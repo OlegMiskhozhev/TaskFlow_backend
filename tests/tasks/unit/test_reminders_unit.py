@@ -7,11 +7,11 @@ from services.reminders import make_reminders_datetimes
 
 
 @pytest.mark.asyncio
-class TestMakeRemindersDatetimesUnit:
+class TestMakeRemindersDatetimeUnit:
     """Юнит-тесты генератора цепочек дат напоминаний по ТЗ."""
 
     @pytest.mark.parametrize(
-        'periodic,expected_count',
+        'periodic, expected_count',
         [
             (ReminderPeriodic.NONE, 1),
             (ReminderPeriodic.DAILY, 6),

@@ -1,10 +1,7 @@
-import os
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
 from beat.tasks import (
     send_deadline_coming_reminder,
@@ -15,48 +12,23 @@ from beat.tasks import (
 from models.enums import ReminderStatus, TaskStatus
 
 
-@pytest.fixture(scope='function')
-def sync_db_session():
-    """Синхронная фикстура сессии СУБД специально для Celery-тестов."""
-    async_url = os.getenv('DATABASE_URL')
-    if async_url:
-        sync_url = async_url.replace('postgresql+asyncpg://', 'postgresql://')
-    else:
-        user = os.getenv('TASKS_DB_USER', 'postgres')
-        password = os.getenv('TASKS_DB_PASSWORD', 'postgres')
-        db_name = os.getenv('TASKS_DB', 'postgres')
-        sync_url = (
-            f'postgresql://{user}:{password}@tasks_db_test:5432/{db_name}'
-        )
-
-    engine = create_engine(sync_url, pool_pre_ping=True)
-    SyncSessionLocal = sessionmaker(
-        autocommit=False, autoflush=False, bind=engine
-    )
-
-    session = SyncSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
-        engine.dispose()
-
-
-@pytest.mark.asyncio
 class TestSendReminderTaskIntegration:
     """Интеграционные тесты планировщика отправки напоминаний."""
 
-    @patch('core.email.EmailService.send_template_email')
     async def test_send_reminder_task_sends_queued_reminders(
         self,
-        mock_send_email,
         db_session,
         sync_db_session,
         test_user,
         create_custom_task_factory,
         create_test_reminder_factory,
+        mocker,
     ):
-        """Тест: успешная выборка QUEUED напоминаний и отправка email."""
+        """Тест: успешная выборка напоминаний в очереди и отправка email."""
+        mock_send_email = mocker.patch(
+            'core.email.EmailService.send_template_email'
+        )
+
         task = await create_custom_task_factory(test_user)
         past_time = datetime.now(UTC) - timedelta(hours=1)
         reminder = await create_test_reminder_factory(
@@ -79,16 +51,19 @@ class TestSendReminderTaskIntegration:
         await db_session.refresh(reminder)
         assert reminder.status == ReminderStatus.SENT
 
-    @patch('core.email.EmailService.send_template_email')
     async def test_send_reminder_task_no_queued_reminders(
         self,
-        mock_send_email,
         sync_db_session,
         test_user,
         create_custom_task_factory,
         create_test_reminder_factory,
+        mocker,
     ):
         """Тест: напоминания из будущего игнорируются планировщиком."""
+        mock_send_email = mocker.patch(
+            'core.email.EmailService.send_template_email'
+        )
+
         task = await create_custom_task_factory(test_user)
         future_time = datetime.now(UTC) + timedelta(hours=24)
         await create_test_reminder_factory(
@@ -112,15 +87,18 @@ class TestSendReminderTaskIntegration:
 class TestSendDeadlineComingReminderIntegration:
     """Интеграционные тесты для задачи send_deadline_coming_reminder."""
 
-    @patch('core.email.EmailService.send_template_email')
     async def test_deadline_coming_reminder_sends_email(
         self,
-        mock_send_email,
         sync_db_session,
         test_user,
         create_custom_task_factory,
+        mocker,  # Используем фикстуру вместо декоратора
     ):
-        """Тест: отправка email, если до дедлайна осталось менее суток."""
+        """Тест: успешная отправка email для дедлайна менее суток."""
+        mock_send_email = mocker.patch(
+            'core.email.EmailService.send_template_email'
+        )
+
         deadline_time = datetime.now(UTC) + timedelta(hours=23)
         await create_custom_task_factory(
             test_user,
@@ -141,15 +119,18 @@ class TestSendDeadlineComingReminderIntegration:
 
         mock_send_email.assert_called_once()
 
-    @patch('core.email.EmailService.send_template_email')
     async def test_deadline_coming_no_email_for_distant_deadline(
         self,
-        mock_send_email,
         sync_db_session,
         test_user,
         create_custom_task_factory,
+        mocker,  # Используем фикстуру вместо декоратора
     ):
-        """Теast: если до дедлайна далеко, уведомление не шлется."""
+        """Тест: если до дедлайна далеко, уведомление не отправляется."""
+        mock_send_email = mocker.patch(
+            'core.email.EmailService.send_template_email'
+        )
+
         deadline_time = datetime.now(UTC) + timedelta(days=10)
         await create_custom_task_factory(
             test_user,
@@ -174,15 +155,18 @@ class TestSendDeadlineComingReminderIntegration:
 class TestSendOverdueTaskReminderIntegration:
     """Интеграционные тесты для задачи send_overdue_task_reminder."""
 
-    @patch('core.email.EmailService.send_template_email')
     async def test_overdue_reminder_sends_email(
         self,
-        mock_send_email,
         sync_db_session,
         test_user,
         create_custom_task_factory,
+        mocker,  # Используем фикстуру вместо декоратора
     ):
-        """Тест: задача просрочена — планировщик высылает алерт."""
+        """Тест: задача просрочена — планировщик успешно отправляет email."""
+        mock_send_email = mocker.patch(
+            'core.email.EmailService.send_template_email'
+        )
+
         past_deadline = datetime.now(UTC) - timedelta(hours=1)
         await create_custom_task_factory(
             test_user,
@@ -208,18 +192,19 @@ class TestSendOverdueTaskReminderIntegration:
 class TestSendStartTaskReminderIntegration:
     """Интеграционные тесты для задачи send_start_task_reminder."""
 
-    @patch('core.email.EmailService.send_template_email')
     async def test_start_task_reminder_sends_email_and_activates(
         self,
-        mock_send_email,
         db_session,
         sync_db_session,
         test_user,
         create_custom_task_factory,
+        mocker,  # Используем фикстуру вместо декоратора
     ):
-        """
-        Тест: старт SCHEDULE задачи, отправка писем и перевод в IN_PROGRESS.
-        """
+        """Тест: старт запланированной задачи, отправка email, смена status."""
+        mock_send_email = mocker.patch(
+            'core.email.EmailService.send_template_email'
+        )
+
         past_start = datetime.now(UTC) - timedelta(hours=1)
         task = await create_custom_task_factory(
             test_user,
@@ -243,16 +228,19 @@ class TestSendStartTaskReminderIntegration:
         await db_session.refresh(task)
         assert task.status == TaskStatus.IN_PROGRESS
 
-    @patch('core.email.EmailService.send_template_email')
     async def test_start_task_reminder_no_email_for_future_start(
         self,
-        mock_send_email,
         db_session,
         sync_db_session,
         test_user,
         create_custom_task_factory,
+        mocker,  # Используем фикстуру вместо декоратора
     ):
-        """Тест: старт запланирован на завтра — задача не активируется."""
+        """Тест: старт запланирован на будущее — задача не активируется."""
+        mock_send_email = mocker.patch(
+            'core.email.EmailService.send_template_email'
+        )
+
         future_start = datetime.now(UTC) + timedelta(hours=24)
         task = await create_custom_task_factory(
             test_user,

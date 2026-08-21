@@ -1,34 +1,35 @@
-import os
 import sys
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import asyncpg
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import sessionmaker
 
-# 1. Мгновенная инициализация путей для предотвращения ImportError
-ROOT_DIR = Path(__file__).resolve().parents[2]
+# Выравнивание путей для бесшовного импорта модулей
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
 TASKS_APP_DIR = ROOT_DIR / 'tasks' / 'app'
 
 if str(TASKS_APP_DIR) not in sys.path:
     sys.path.insert(0, str(TASKS_APP_DIR))
 
-from main import app
-
-import core.redis as app_redis
-import database.db as db_module
-import services.users as users_service
-from database.db import Base
-from models.enums import (
+import core.redis as app_redis  # noqa: E402
+import database.db as db_module  # noqa: E402
+import services.users as users_service  # noqa: E402
+from database.db import Base  # noqa: E402
+from main import app  # noqa: E402
+from models.enums import (  # noqa: E402
     ProjectStatus,
     ReminderChannel,
     ReminderStatus,
@@ -37,7 +38,7 @@ from models.enums import (
     Timezone,
     UserRole,
 )
-from models.taskflow import (
+from models.taskflow import (  # noqa: E402
     Attachment,
     Project,
     Reminder,
@@ -45,91 +46,98 @@ from models.taskflow import (
     Task,
     TaskList,
 )
-from models.users import Token, User
-from schemas.projects import ProjectCreate
-from schemas.users import RegisterRequest
-from services.auth import auth_service
+from models.users import Token, User  # noqa: E402
+from schemas.projects import ProjectCreate  # noqa: E402
+from schemas.users import RegisterRequest  # noqa: E402
+from services.auth import auth_service  # noqa: E402
+from tests.infra_service import DockerSubprocessInfraService  # noqa: E402
 
-DB_USER = os.getenv('TASKS_DB_USER')
-DB_PASS = os.getenv('TASKS_DB_PASSWORD')
-DB_HOST = os.getenv('TASKS_DB_HOST')
-DB_PORT = os.getenv('TASKS_DB_PORT')
-DB_NAME = os.getenv('TASKS_DB')
-
-ASYNC_URL = (
-    f'postgresql+asyncpg://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
+# Синглтон инфраструктурного менеджера домена Tasks (Порт 5436)
+tasks_infra = DockerSubprocessInfraService(
+    container_name='tasks_db_test',
+    env_file_path='./tests/tasks/.env.tasks.test',
+    host_port=5436,
 )
 
 
-@pytest_asyncio.fixture(scope='function', autouse=True)
-async def manage_db():
-    """Атомарно пересоздает чистую тестовую базу СУБД перед каждым тестом."""
-    conn = await asyncpg.connect(
-        user=DB_USER,
-        password=DB_PASS,
-        database='postgres',
-        host=DB_HOST,
-        port=DB_PORT,
-    )
-    await conn.execute(f"""
-        SELECT pg_terminate_backend(pid)
-        FROM pg_stat_activity
-        WHERE datname = '{DB_NAME}'
-    """)
-    exists = await conn.fetchval(
-        'SELECT 1 FROM pg_database WHERE datname = $1', DB_NAME
-    )
-    if exists:
-        await conn.execute(f'DROP DATABASE "{DB_NAME}"')
-    await conn.execute(f'CREATE DATABASE "{DB_NAME}"')
-    await conn.close()
-
-    yield
-
-    conn = await asyncpg.connect(
-        user=DB_USER,
-        password=DB_PASS,
-        database='postgres',
-        host=DB_HOST,
-        port=DB_PORT,
-    )
-    await conn.execute(f"""
-        SELECT pg_terminate_backend(pid)
-        FROM pg_stat_activity
-        WHERE datname = '{DB_NAME}'
-    """)
-    await conn.execute(f'DROP DATABASE IF EXISTS "{DB_NAME}"')
-    await conn.close()
+# Прямая инжекция пустых асинхронных функций-заглушек в синглтоны Redis
+async def dummy_redis_call(*_args: Any, **_kwargs: Any) -> bool:
+    """Бесшумная заглушка, заменяющая вызовы к Redis."""
+    return True
 
 
-@pytest_asyncio.fixture(scope='function')
-async def db_engine(manage_db):
-    """Инициализирует тестовый движок SQLAlchemy и создает таблицы."""
-    engine = create_async_engine(ASYNC_URL)
+async def dummy_redis_get(*_args: Any, **_kwargs: Any) -> None:
+    """Бесшумный геттер, имитирующий cache miss для тестов."""
+    return None
+
+
+app_redis.redis_service.invalidate = dummy_redis_call
+app_redis.redis_service.get = dummy_redis_get
+app_redis.redis_service.set = dummy_redis_call
+app_redis.redis_service.delete = dummy_redis_call
+
+users_service.redis_cache.invalidate = dummy_redis_call
+users_service.redis_cache.get = dummy_redis_get
+users_service.redis_cache.set = dummy_redis_call
+users_service.redis_cache.delete = dummy_redis_call
+
+# =============================================================================
+# 🐳 ZONE 1: РАБОТА С СИСТЕМНЫМИ ХУКАМИ И ЖИЗНЕННЫМ ЦИКЛОМ DOCKER
+# =============================================================================
+
+
+# pylint: disable=unused-argument
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Глобальный хук инициализации тестовой сессии.
+
+    Разворачивает изолированный контейнер СУБД для тасок ДО начала
+    сборки тестов и запуска асинхронных циклов.
+    """
+    tasks_infra.start_infra()
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Глобальный хук завершения тестовой сессии.
+
+    Обеспечивает очистку ресурсов хост-машины и удаление контейнера.
+    """
+    tasks_infra.stop_infra()
+
+
+# =============================================================================
+# 🗄️ ZONE 2: ИНИЦИАЛИЗАЦИЯ СУБД, ЖИЗНЕННЫЙ ЦИКЛ ТАБЛИЦ И СЕССИЙ
+# =============================================================================
+
+
+@pytest_asyncio.fixture(scope='session')
+async def db_engine():
+    """Инициализация асинхронного движка SQLAlchemy и генерация DDL."""
+    engine = create_async_engine(tasks_infra.get_db_url())
+
     async with engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(partial(Base.metadata.create_all))
+
     yield engine
+
+    async with engine.begin() as connection:
+        await connection.run_sync(partial(Base.metadata.drop_all))
     await engine.dispose()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(scope='session')
 async def test_session_maker(db_engine):
-    """Создает тестовую фабрику сессий async_sessionmaker."""
-    return async_sessionmaker(
+    """Создание сессионной фабрики для генерации транзакций."""
+    maker = async_sessionmaker(
         bind=db_engine,
         class_=AsyncSession,
         expire_on_commit=False,
     )
-
-
-# ─────────────────────────────────────────────────────────────────
-# SECTION 1: УПРАВЛЕНИЕ СЕССИЯМИ СУБД И ИЗОЛЯЦИЯ ТРАНЗАКЦИЙ
-# ─────────────────────────────────────────────────────────────────
+    return maker
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def override_session_maker(test_session_maker):
-    """Подменяет глобальную фабрику сессий приложения на тестовую."""
+async def mock_session_maker(test_session_maker):
+    """Глобальный перехватчик фабрики сессий бизнес-логики приложения."""
     original_session_maker = db_module.async_session_maker
     db_module.async_session_maker = test_session_maker
     try:
@@ -138,30 +146,79 @@ async def override_session_maker(test_session_maker):
         db_module.async_session_maker = original_session_maker
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def clean_database_tables(test_session_maker):
+    """Принудительная каскадная очистка всех ORM-таблиц перед каждым тестом.
+
+    Динамически извлекает имена существующих таблиц из метаданных Base,
+    предотвращая ошибки UndefinedTableError при изменении схемы.
+    """
+    async with test_session_maker() as session:
+        # 🧠 Динамически собираем имена всех зарегистрированных таблиц из ORM
+        table_names = [table.name for table in Base.metadata.sorted_tables]
+
+        if table_names:
+            # Склеиваем имена через запятую для одной быстрой команды Postgres
+            tables_str = ', '.join(f'"{name}"' for name in table_names)
+            truncate_query = (
+                f'TRUNCATE TABLE {tables_str} RESTART IDENTITY CASCADE;'
+            )
+            await session.execute(text(truncate_query))
+            await session.commit()
+    yield
+
+
 @pytest_asyncio.fixture
 async def db_session(test_session_maker):
-    """Создаёт изолированную контекстную сессию БД для тестов."""
+    """Предоставление чистой асинхронной сессии для контекста тестов."""
     async with test_session_maker() as session:
         yield session
 
 
+@pytest.fixture(scope='function')
+def sync_db_session():
+    """Синхронная сессия СУБД для тестирования Celery-задач Beat.
+
+    Динамически адаптирует асинхронный DSN провайдера инфраструктуры
+    под требования синхронного драйвера psycopg2.
+    """
+    async_url = tasks_infra.get_db_url()
+    sync_url = async_url.replace('postgresql+asyncpg://', 'postgresql://')
+
+    engine = create_engine(sync_url, pool_pre_ping=True)
+    # 🔥 ИСПРАВЛЕНО: Имя переменной переведено в каноничный snake_case
+    sync_session_local = sessionmaker(
+        autocommit=False, autoflush=False, bind=engine
+    )
+
+    session = sync_session_local()
+    try:
+        yield session
+    finally:
+        session.close()
+        engine.dispose()
+
+
+# =============================================================================
+# 🧬 ZONE 3: МОКИРОВАНИЕ, МОНКИПАЙТЧИНГ И ПЕРЕХВАТ ПОВЕДЕНИЯ СУБД
+# =============================================================================
+
+
 @pytest.fixture
 def force_commit_failure(monkeypatch: pytest.MonkeyPatch):
-    """Позволяет принудительно вызывать сбой коммита транзакции в СУБД."""
+    """Точечно подменяет AsyncSession.commit на ошибку SQLAlchemyError."""
 
     def _activate() -> None:
-        async def _fail_commit(_self) -> None:
+        async def _fail_commit(_self) -> None:  # noqa: ANN001
             raise SQLAlchemyError('commit failed')
 
         monkeypatch.setattr(AsyncSession, 'commit', _fail_commit)
 
     return _activate
 
-
-# ─────────────────────────────────────────────────────────────────
-# SECTION 2: ПРОФИЛИ ТЕСТОВЫХ ПОЛЬЗОВАТЕЛЕЙ И АВТОРИЗАЦИЯ
-# ─────────────────────────────────────────────────────────────────
-
+# =============================================================================
+# 🌐 ZONE 4: ПРОФИЛИ ТЕСТОВЫХ ПОЛЬЗОВАТЕЛЕЙ И АВТОРИЗАЦИЯ (HTTPX CLIENT)
+# =============================================================================
 
 @pytest_asyncio.fixture
 async def test_user(db_session):
@@ -212,58 +269,23 @@ async def auth_headers(test_user):
 async def async_client():
     """Инициализирует асинхронный тестовый клиент HTTP-запросов FastAPI."""
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url='http://test') as ac:
+    async with AsyncClient(
+        transport=transport, base_url='http://test'
+    ) as ac:
         yield ac
 
 
-@pytest.fixture
-def mock_send_confirmation_email():
-    """Мокает отложенную Celery-таску отправки email подтверждения."""
-    with patch('routers.auth.send_confirmation_email_task.delay') as mock:
-        yield mock
+# =============================================================================
+# 🧬 ZONE 5: СЕТЕВЫЕ ЗАГЛУШКИ И СТОРОННИЕ СЕРВИСЫ
+# =============================================================================
 
-
-@pytest.fixture
-def mock_send_password_reset_email():
-    """Мокает отложенную Celery-таску отправки email сброса пароля."""
-    with patch('routers.auth.send_password_reset_email_task.delay') as mock:
-        yield mock
-
-
-# ─────────────────────────────────────────────────────────────────
-# SECTION 3: СЕТЕВАЯ ИНФРАСТРУКТУРА И КЭШИРОВАНИЕ (REDIS, S3 MINIO)
-# ─────────────────────────────────────────────────────────────────
-
-
-# Прямая инжекция пустых асинхронных функций в оригинальные синглтоны
-async def dummy_redis_call(*args, **kwargs):
-    """Бесшумная заглушка, заменяющая вызовы к Redis в роутерах API."""
-    return True
-
-
-async def dummy_redis_get(*args, **kwargs):
-    """Бесшумный геттер, имитирующий cache miss для тестов."""
-    return None
-
-
-app_redis.redis_service.invalidate = dummy_redis_call
-app_redis.redis_service.get = dummy_redis_get
-app_redis.redis_service.set = dummy_redis_call
-app_redis.redis_service.delete = dummy_redis_call
-
-users_service.redis_cache.invalidate = dummy_redis_call
-users_service.redis_cache.get = dummy_redis_get
-users_service.redis_cache.set = dummy_redis_call
-users_service.redis_cache.delete = dummy_redis_call
-
-
-@pytest_asyncio.fixture(scope='function', autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def clear_redis_cache():
     """Автоматически очищает Redis между тестами для изоляции кэша."""
     yield
 
 
-@pytest.fixture(scope='function', autouse=True)
+@pytest.fixture(autouse=True)
 def mock_minio_s3_calls():
     """Полностью изолирует вызовы сетевого клиента MinIO Handler."""
     with (
@@ -297,10 +319,31 @@ def mock_redis_service_global():
     yield mock_service
 
 
-# ─────────────────────────────────────────────────────────────────
-# SECTION 4: ЛЕГКОВЕСНЫЕ СХЕМЫ, ХЕЛПЕРЫ ДАТ И ИЕРАРХИИ ПУТЕЙ
-# ─────────────────────────────────────────────────────────────────
+@pytest.fixture
+def mock_send_confirmation_email():
+    """Имитирует отложенную задачу Celery по отправке подтверждения email.
 
+    Подменяет реальный вызов фонового процесса отправки на тестовую
+    заглушку для изоляции сетевых взаимодействий.
+    """
+    with patch('routers.auth.send_confirmation_email_task.delay') as mock:
+        yield mock
+
+
+@pytest.fixture
+def mock_send_password_reset_email():
+    """Имитирует отложенную задачу Celery по сбросу пароля пользователя.
+
+    Подменяет реальный вызов фонового процесса отправки на тестовую
+    заглушку для изоляции сетевых взаимодействий.
+    """
+    with patch('routers.auth.send_password_reset_email_task.delay') as mock:
+        yield mock
+
+
+# =============================================================================
+# 🎭 ZONE 6: ЛЕГКОВЕСНЫЕ СХЕМЫ, ХЕЛПЕРЫ ДАТ И ИЕРАРХИИ ПУТЕЙ
+# =============================================================================
 
 @pytest.fixture
 def future_datetime_mock() -> datetime:
@@ -339,10 +382,81 @@ def mock_path_hierarchy():
     return _create
 
 
-# ─────────────────────────────────────────────────────────────────
-# SECTION 5: ПРОМЫШЛЕННЫЕ ORM-ФАБРИКИ (FIXTURE FACTORIES) СУБД
-# ─────────────────────────────────────────────────────────────────
+@pytest.fixture
+def mock_user_factory(mocker):
+    """Фабрика для генерации легковесных мок-объектов пользователей."""
+    def _create(user_id: int = 123) -> mocker.Mock:
+        user = mocker.Mock()
+        user.id = user_id
+        return user
+    return _create
 
+
+@pytest.fixture
+def mock_reminder_factory(mocker):
+    """Фабрика для генерации легковесных мок-объектов напоминаний."""
+    def _create(reminder_id: int = 777) -> mocker.Mock:
+        reminder = mocker.Mock()
+        reminder.id = reminder_id
+        return reminder
+    return _create
+
+
+@pytest.fixture
+def mock_objects_factory(mocker):
+    """Фабрика для генерации вложенных мок-контекстов Канбана и тегов."""
+    def _create(
+        user_id: int = 123,
+        project_id: int = 10,
+        tasklist_id: int = 777,
+        task_id: int = 456,
+        subtask_id: int = 123,
+        tag_id: int = 777,
+        user_tz: str = 'Europe/Moscow',
+    ) -> mocker.Mock:
+        obj = mocker.Mock()
+        obj.project.id = project_id
+        obj.project.user_id = user_id
+        obj.project.user.timezone.value = user_tz
+        obj.tasklist.id = tasklist_id
+        obj.task.id = task_id
+        obj.subtask.id = subtask_id
+        obj.tag.id = tag_id
+        return obj
+    return _create
+
+
+@pytest.fixture
+def mock_crud_factory(mocker):
+    """Фабрика для генерации асинхронных заглушек методов базового CRUD."""
+
+    def _mock_method(
+        router_path: str,
+        method_name: str = 'add',
+        return_value: Any = None,
+        side_effect: Any = None,
+    ) -> mocker.AsyncMock:
+        # Если return_value не передан, по дефолту для .add() создаем Mock(id=1)
+        if return_value is None and method_name == 'add':
+            return_value = mocker.Mock(id=1)
+
+        mock_func = mocker.patch(
+            f'routers.{router_path}.service.{method_name}',
+            new_callable=mocker.AsyncMock,
+        )
+
+        if side_effect:
+            mock_func.side_effect = side_effect
+        else:
+            mock_func.return_value = return_value
+
+        return mock_func
+    return _mock_method
+
+
+# =============================================================================
+# 🏗️ ZONE 7: ПРОМЫШЛЕННЫЕ ORM-ФАБРИКИ (FIXTURE FACTORIES) СУБД ТАСОК
+# =============================================================================
 
 @pytest_asyncio.fixture
 def create_test_user_factory(db_session):
@@ -414,7 +528,7 @@ def create_test_project_factory(db_session, future_datetime_mock):
 
 @pytest_asyncio.fixture
 def create_test_tasklist_factory(db_session):
-    """Фабрика для генерации ORM-объектов списков задач в тестовой СУБД."""
+    """Фабрика для generation ORM-объектов списков задач в СУБД."""
 
     async def _create(
         project_id: int, name: str, seq_number: int = 1
@@ -472,13 +586,13 @@ def create_test_task_factory(db_session, future_datetime_mock):
 
 @pytest_asyncio.fixture
 def create_custom_task_factory(db_session, future_datetime_mock):
-    """Фабрика создания задачи с кастомными статусами, дедлайнами и стартом."""
+    """Фабрика создания задачи с кастомными статусами и дедлайнами."""
 
     async def _create(
         test_user,
         status: TaskStatus = TaskStatus.IN_PROGRESS,
-        deadline: datetime = None,
-        start_at: datetime = None,
+        deadline: datetime | None = None,
+        start_at: datetime | None = None,
     ) -> Task:
         now_naive = datetime.now(UTC).replace(tzinfo=None)
         project = Project(
@@ -576,3 +690,4 @@ def create_test_tag_factory(db_session):
         return tag
 
     return _create
+

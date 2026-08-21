@@ -243,7 +243,7 @@ async def move_task(
     responses={404: SWAGGER_RESPONSES},
 )
 async def delete_task(objects: TaskPathDependency) -> Response:
-    await service.delete(model=Task, id=objects.task.id)
+    await service.delete(model=Task, obj_id=objects.task.id)
 
     await redis_service.invalidate(
         f'user:{objects.project.user_id}:projects:*'

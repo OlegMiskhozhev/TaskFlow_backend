@@ -13,10 +13,10 @@ class Service:
 
     @connection
     async def get(
-        self, model: type[ModelT], id: int, session: AsyncSession
+        self, model: type[ModelT], obj_id: int, session: AsyncSession
     ) -> type[ModelT] | None:
         """Возвращает объект модели по его id."""
-        item = await session.get(model, id)
+        item = await session.get(model, obj_id)
         return item if item else None
 
     @connection
@@ -45,13 +45,14 @@ class Service:
                 setattr(item, field, value)
             await session.commit()
             return item
+        return None
 
     @connection
     async def delete(
-        self, model: type[ModelT], id: int, session: AsyncSession
+        self, model: type[ModelT], obj_id: int, session: AsyncSession
     ) -> bool:
         """Метод удаления записи из таблицы."""
-        item = await session.get(model, id)
+        item = await session.get(model, obj_id)
         if item:
             await session.delete(item)
             await session.commit()

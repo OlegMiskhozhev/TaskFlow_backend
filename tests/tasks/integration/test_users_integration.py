@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -83,14 +83,24 @@ class TestUsersServiceIntegration:
         # Исправлено: у пользователя без аватара ссылка должна быть None
         assert result.avatar_url is None
 
-    @patch('services.users.uuid4')
-    @patch('services.users.client.upload_file', new_callable=AsyncMock)
+    @pytest.mark.asyncio
     async def test_update_avatar_integration(
-        self, mock_upload, mock_uuid, db_session, create_test_user_factory
-    ):
+        self,
+        db_session,
+        create_test_user_factory,
+        mocker,  # 🚀 Внедряем чистую фикстуру pytest-mock
+    ) -> None:
         """Проверяет создание нового аватара для пользователя."""
+        # Атомарно создаем заглушки прямо внутри контекста функции
+        mock_uuid = mocker.patch('services.users.uuid4')
+        mock_upload = mocker.patch(
+            'services.users.client.upload_file',
+            new_callable=AsyncMock,
+        )
+
         user_orm = await create_test_user_factory(
-            email='update_avatar@test.com', username='updateavatar'
+            email='update_avatar@test.com',
+            username='updateavatar',
         )
         user_id = user_orm.id
         mock_uuid.return_value = 'acefbd9e-5f17-4422-baea-6fd29c84f74c'
@@ -98,7 +108,7 @@ class TestUsersServiceIntegration:
         mock_file = AsyncMock()
         mock_file.filename = 'new_avatar.jpg'
         mock_file.size = 1024
-        mock_file.file = Mock()
+        mock_file.file = mocker.Mock()  # Используем Mock из фикстуры
 
         # Отсоединяем объект от тестовой сессии перед входом в @connection
         db_session.expunge(user_orm)
@@ -106,27 +116,39 @@ class TestUsersServiceIntegration:
         # Запускаем транзакционный метод обновления
         await update_avatar(user_orm, mock_file)
 
-        # Вычищаем кэш ОЗУ тестовой сессии через close() вместо expire_all()
+        # Вычищаем кэш ОЗУ тестовой сессии
         await db_session.close()
 
-        # Исправлено MissingGreenlet: используем изолированную переменную ID
+        # Поиск созданного аватара через изолированную переменную ID
         stmt = select(Avatar).where(Avatar.user_id == user_id)
         result = await db_session.execute(stmt)
         avatar = result.scalar_one_or_none()
 
+        # Верификация результатов выполнения
         assert avatar is not None
         assert avatar.filename == 'new_avatar.jpg'
         assert avatar.mime_type == 'jpg'
         assert avatar.user_id == user_id
 
-    @patch('services.users.uuid4')
-    @patch('services.users.client.upload_file', new_callable=AsyncMock)
+        mock_upload.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_update_avatar_existing_avatar_integration(
-        self, mock_upload, mock_uuid, db_session, create_test_user_factory
-    ):
+        self,
+        db_session,
+        create_test_user_factory,
+        mocker,
+    ) -> None:
         """Проверяет обновление полей существующего аватара."""
+        mock_uuid = mocker.patch('services.users.uuid4')
+        mocker.patch(
+            'services.users.client.upload_file',
+            new_callable=AsyncMock,
+        )
+
         user_orm = await create_test_user_factory(
-            email='existing_avatar@test.com', username='existinguser'
+            email='existing_avatar@test.com',
+            username='existinguser',
         )
         user_id = user_orm.id
 
@@ -134,7 +156,7 @@ class TestUsersServiceIntegration:
         mock_file_first = AsyncMock()
         mock_file_first.filename = 'old_avatar.jpg'
         mock_file_first.size = 1024
-        mock_file_first.file = Mock()
+        mock_file_first.file = mocker.Mock()
 
         await update_avatar(user_orm, mock_file_first)
 
@@ -143,7 +165,7 @@ class TestUsersServiceIntegration:
         mock_file_new = AsyncMock()
         mock_file_new.filename = 'new_avatar.png'
         mock_file_new.size = 2048
-        mock_file_new.file = Mock()
+        mock_file_new.file = mocker.Mock()
 
         await update_avatar(user_orm, mock_file_new)
 
@@ -158,24 +180,35 @@ class TestUsersServiceIntegration:
         assert avatar.minio_name == 'new-uuid-222'
         assert avatar.mime_type == 'png'
 
-    @patch('services.users.uuid4')
-    @patch('services.users.client.upload_file', new_callable=AsyncMock)
+    @pytest.mark.asyncio
     async def test_update_avatar_upload_called_properly(
-        self, mock_upload, mock_uuid, db_session, create_test_user_factory
-    ):
+        self,
+        db_session,
+        create_test_user_factory,
+        mocker,
+    ) -> None:
         """Проверяет передачу аргументов в S3 клиент при выгрузке."""
+        mock_uuid = mocker.patch('services.users.uuid4')
+        mock_upload = mocker.patch(
+            'services.users.client.upload_file',
+            new_callable=AsyncMock,
+        )
+
         user_orm = await create_test_user_factory(
-            email='upload_test@test.com', username='uploaduser'
+            email='upload_test@test.com',
+            username='uploaduser',
         )
         mock_uuid.return_value = 'test-uuid-333'
 
         mock_file = AsyncMock()
         mock_file.filename = 'test.jpg'
         mock_file.size = 1024
-        mock_file.file = Mock()
+        mock_file.file = mocker.Mock()
 
         await update_avatar(user_orm, mock_file)
 
         mock_upload.assert_called_once_with(
-            'test-uuid-333.jpg', mock_file.file, 1024
+            'test-uuid-333.jpg',
+            mock_file.file,
+            1024,
         )

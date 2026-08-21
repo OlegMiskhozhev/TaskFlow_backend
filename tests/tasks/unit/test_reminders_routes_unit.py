@@ -1,5 +1,4 @@
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import status
@@ -18,20 +17,21 @@ from schemas.reminders import CreateReminder, ReminderUpdate
 class TestReminderCreateUnit:
     """Юнит-тесты для роутера создания и обновления цепочки напоминаний."""
 
-    @patch('routers.reminders.update_task_reminders', new_callable=AsyncMock)
-    async def test_reminder_create_success(self, mock_update_task):
-        """Тест: успешный проброс таймзоны и вызов сервиса генерации."""
-        # Создаем валидный мок задачи с типами данных, проходящими CurrentTask
-        mock_task_obj = Mock()
+    async def test_reminder_create_success(self, mocker):
+        """Тест: успешная передача таймзоны и вызов сервиса генерации."""
+        mock_update_task = mocker.patch(
+            'routers.reminders.update_task_reminders',
+            new_callable=mocker.AsyncMock
+        )
+        mock_task_obj = mocker.Mock()
         mock_task_obj.id = 10
         mock_task_obj.status = 'in_progress'
 
-        # Насыщаем дедлайн задачи, чтобы пройти внутренние ТЗ-валидаторы
         future_deadline = datetime.now(UTC) + timedelta(days=10)
         mock_task_obj.deadline = future_deadline
         mock_task_obj.start_at = None
 
-        mock_objects = Mock()
+        mock_objects = mocker.Mock()
         mock_objects.project.user.timezone.value = 'Europe/Moscow'
         mock_objects.task = mock_task_obj
 
@@ -56,11 +56,18 @@ class TestReminderCreateUnit:
 class TestGetRemindersUnit:
     """Юнит-тесты для роутера получения ленты напоминаний."""
 
-    @patch('routers.reminders.get_user_reminders', new_callable=AsyncMock)
-    async def test_get_reminders_calls_service(self, mock_get):
+    async def test_get_reminders_calls_service(
+            self,
+            mock_user_factory,
+            mocker
+    ):
         """Тест: вызов сервисного слоя get_user_reminders."""
-        mock_get.return_value = Mock()
-        mock_user = Mock()
+        mock_get = mocker.patch(
+            'routers.reminders.get_user_reminders',
+            return_value=mocker.Mock(),
+            new_callable=mocker.AsyncMock
+        )
+        mock_user = mock_user_factory()
 
         result = await get_reminders(current_user=mock_user)
 
@@ -72,11 +79,17 @@ class TestGetRemindersUnit:
 class TestReadReminderUnit:
     """Юнит-тесты для роутера отметки прочтения напоминания."""
 
-    @patch('routers.reminders.service.update', new_callable=AsyncMock)
-    async def test_read_reminder_model_dump_and_update(self, mock_update):
+    async def test_read_reminder_model_dump_and_update(
+        self,
+        mock_reminder_factory,
+        mocker
+    ):
         """Тест: упаковка id в словарь и вызов базового service.update."""
-        mock_reminder = Mock()
-        mock_reminder.id = 777
+        mock_update = mocker.patch(
+            'routers.reminders.service.update',
+            new_callable=mocker.AsyncMock,
+        )
+        mock_reminder = mock_reminder_factory(reminder_id=777)
 
         reminder_read = ReminderUpdate(was_read=True)
 
@@ -87,7 +100,7 @@ class TestReadReminderUnit:
         assert response.status_code == status.HTTP_200_OK
         mock_update.assert_called_once()
 
-        called_args = mock_update.call_args[0]
+        called_args = mock_update.call_args.args
         called_model = called_args[0]
         called_values = called_args[1]
 
@@ -100,18 +113,24 @@ class TestReadReminderUnit:
 class TestDeleteReminderUnit:
     """Юнит-тесты для роутера удаления напоминания."""
 
-    @patch('routers.reminders.service.delete', new_callable=AsyncMock)
-    async def test_delete_reminder_calls_service(self, mock_delete):
+    async def test_delete_reminder_calls_service(
+        self,
+        mock_reminder_factory,
+        mocker
+    ):
         """Тест: вызов базового CRUD service.delete с нужным ID."""
-        mock_reminder = Mock()
-        mock_reminder.id = 888
+        mock_delete = mocker.patch(
+            'routers.reminders.service.delete',
+            new_callable=mocker.AsyncMock
+        )
+        mock_reminder = mock_reminder_factory(reminder_id=888)
 
         response = await delete_reminders(reminder=mock_reminder)
 
         assert response.status_code == status.HTTP_204_NO_CONTENT
         mock_delete.assert_called_once()
 
-        called_args = mock_delete.call_args[0]
+        called_args = mock_delete.call_args.args
         called_model = called_args[0]
         called_id = called_args[1]
 

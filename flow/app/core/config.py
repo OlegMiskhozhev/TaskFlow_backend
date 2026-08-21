@@ -1,18 +1,21 @@
-from pathlib import Path
+from typing import ClassVar
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASE_SETTINGS_CONFIG = SettingsConfigDict(
-    env_file_encoding='utf8',
-    extra='ignore',
-)
 
-
-class DatabaseSettings(BaseSettings):
+# noinspection DuplicatedCode
+class CoreSettings(BaseSettings):
     """Настройки конфигурации базы данных."""
 
-    model_config = BASE_SETTINGS_CONFIG
+    model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(
+        env_file_encoding='utf8',
+        extra='ignore',
+    )
+
+
+class DatabaseSettings(CoreSettings):
+    """Настройки конфигурации базы данных."""
 
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
@@ -32,14 +35,14 @@ class DatabaseSettings(BaseSettings):
         )
 
 
-class Settings(BaseSettings):
+class Settings(CoreSettings):
     """Общие настройки конфигурации проекта."""
 
-    model_config = BASE_SETTINGS_CONFIG
-
     db_settings: DatabaseSettings = Field(default_factory=DatabaseSettings)
-    TASKS_USER_ID_URL: str = 'http://tasks_backend:8000/user/id'
-    TASKS_AUTH_TIMEOUT_SECONDS: float = Field(default=3.0, gt=0)
+
+    # 🔐 Добавляем параметры шифрования, общие с сервисом Tasks
+    SECRET_KEY: str = 'test_secret_key_for_tests_only_32chars_min'
+    JWT_ALGORITHM: str = 'HS256'
 
 
 settings = Settings()

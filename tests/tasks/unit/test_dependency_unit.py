@@ -1,5 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
-
+# tests/tasks/unit/test_nested_urls_unit.py
 import pytest
 from fastapi import HTTPException, status
 
@@ -16,12 +15,14 @@ from models.taskflow import Project, Subtask, Task, TaskList
 class TestCheckNestedUrlsUnit:
     """Юнит-тесты функций контроля вложенности URL-сегментов Канбана."""
 
-    @patch('core.dependency.service.get', new_callable=AsyncMock)
-    async def test_check_project_url_success(self, mock_get):
+    async def test_check_project_url_success(self, mocker) -> None:
         """Тест: успешная проверка базового проекта."""
-        mock_user = Mock(id=5)
-        mock_project = Mock(user_id=5)
-        # Исправлено is_instance_of: подменяем __class__ мока на тип Project
+        mock_get = mocker.patch(
+            'core.dependency.service.get',
+            new_callable=mocker.AsyncMock,
+        )
+        mock_user = mocker.Mock(id=5)
+        mock_project = mocker.Mock(user_id=5)
         mock_project.__class__ = Project
         mock_get.return_value = mock_project
 
@@ -30,21 +31,33 @@ class TestCheckNestedUrlsUnit:
         assert result is not None
         assert result.project == mock_project
 
-    @patch('core.dependency.service.get', new_callable=AsyncMock)
-    async def test_check_project_url_not_found_raises_404(self, mock_get):
+    async def test_check_project_url_not_found_raises_404(
+        self,
+        mocker,
+    ) -> None:
         """Тест: несуществующий проект возвращает статус 404."""
+        mock_get = mocker.patch(
+            'core.dependency.service.get',
+            new_callable=mocker.AsyncMock,
+        )
         mock_get.return_value = None
 
         with pytest.raises(HTTPException) as exc:
-            await check_project_url(user=Mock(), project_id=9999)
+            await check_project_url(user=mocker.Mock(), project_id=9999)
 
         assert exc.value.status_code == status.HTTP_404_NOT_FOUND
 
-    @patch('core.dependency.service.get', new_callable=AsyncMock)
-    async def test_check_project_url_access_denied_raises_403(self, mock_get):
+    async def test_check_project_url_access_denied_raises_403(
+        self,
+        mocker,
+    ) -> None:
         """Тест: чужой проект блокируется с 403 Forbidden."""
-        mock_user = Mock(id=5)
-        mock_project = Mock(user_id=99)  # Чужой ID владельца
+        mock_get = mocker.patch(
+            'core.dependency.service.get',
+            new_callable=mocker.AsyncMock,
+        )
+        mock_user = mocker.Mock(id=5)
+        mock_project = mocker.Mock(user_id=99)  # Чужой ID владельца
         mock_project.__class__ = Project
         mock_get.return_value = mock_project
 
@@ -53,11 +66,14 @@ class TestCheckNestedUrlsUnit:
 
         assert exc.value.status_code == status.HTTP_403_FORBIDDEN
 
-    @patch('core.dependency.service.get', new_callable=AsyncMock)
-    async def test_check_tasklist_url_success(self, mock_get):
+    async def test_check_tasklist_url_success(self, mocker) -> None:
         """Тест: валидация цепочки связей списка задач."""
-        mock_user = Mock(id=1)
-        mock_tasklist = MagicMock()
+        mock_get = mocker.patch(
+            'core.dependency.service.get',
+            new_callable=mocker.AsyncMock,
+        )
+        mock_user = mocker.Mock(id=1)
+        mock_tasklist = mocker.MagicMock()
         mock_tasklist.project_id = 10
         mock_tasklist.project.user_id = 1
 
@@ -73,11 +89,14 @@ class TestCheckNestedUrlsUnit:
         assert result.tasklist == mock_tasklist
         assert result.project == mock_tasklist.project
 
-    @patch('core.dependency.service.get', new_callable=AsyncMock)
-    async def test_check_task_url_success(self, mock_get):
+    async def test_check_task_url_success(self, mocker) -> None:
         """Тест: сквозная валидация всей иерархии вложенности карточки."""
-        mock_user = Mock(id=1)
-        mock_task = MagicMock()
+        mock_get = mocker.patch(
+            'core.dependency.service.get',
+            new_callable=mocker.AsyncMock,
+        )
+        mock_user = mocker.Mock(id=1)
+        mock_task = mocker.MagicMock()
         mock_task.tasklist_id = 5
         mock_task.tasklist.project_id = 10
         mock_task.tasklist.project.user_id = 1
@@ -96,12 +115,17 @@ class TestCheckNestedUrlsUnit:
         assert result.tasklist == mock_task.tasklist
         assert result.project == mock_task.tasklist.project
 
-    @patch('core.dependency.service.get', new_callable=AsyncMock)
     async def test_check_subtask_url_success(
-        self, mock_get, mock_path_hierarchy
-    ):
+        self,
+        mock_path_hierarchy,
+        mocker,
+    ) -> None:
         """Тест: успешная сквозная проверка подзадачи через фабрику."""
-        mock_user = Mock(id=1)
+        mock_get = mocker.patch(
+            'core.dependency.service.get',
+            new_callable=mocker.AsyncMock,
+        )
+        mock_user = mocker.Mock(id=1)
 
         # Фабрика мгновенно строит цепочку связей вложенности
         mock_subtask = mock_path_hierarchy(user_id=1, project_id=1)
