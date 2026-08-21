@@ -121,6 +121,7 @@ services:
     environment:
       - POSTGRES_HOST=flow_db
       - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
     depends_on:
       - flow_db
     networks:

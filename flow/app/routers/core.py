@@ -13,8 +13,10 @@
 from datetime import date
 
 from fastapi import APIRouter, HTTPException, Path, Query, status
+from pydantic import TypeAdapter
 
 from core.dependency import CurrentUserIdDependency
+from core.redis import redis_service
 from schemas.flow import (
     CalendarNoteDate,
     NoteCreate,
@@ -34,6 +36,46 @@ from services.flow import (
 )
 
 core_router = APIRouter(prefix='/notes', tags=['Заметки'])
+
+NOTES_CACHE_TTL_SECONDS = 300
+NOTES_CACHE_PREFIX = 'flow:notes'
+NOTES_LIST_TYPE_ADAPTER = TypeAdapter(NotesList)
+CALENDAR_NOTE_DATES_TYPE_ADAPTER = TypeAdapter(list[CalendarNoteDate])
+
+
+def _get_notes_list_cache_key(
+    *,
+    user_id: int,
+    note_date: date | None,
+    offset: int,
+    limit: int,
+) -> str:
+    """Сформировать ключ кэша списка заметок пользователя."""
+    date_part = f'date:{note_date.isoformat()}' if note_date else 'all'
+    return (
+        f'{NOTES_CACHE_PREFIX}:{user_id}:list:'
+        f'{date_part}:{offset}:{limit}'
+    )
+
+
+def _get_calendar_cache_key(
+    *,
+    user_id: int,
+    month: int | None,
+    year: int | None,
+) -> str:
+    """Сформировать ключ кэша календаря заметок пользователя."""
+    month_part = month if month is not None else 'all'
+    year_part = year if year is not None else 'all'
+    return (
+        f'{NOTES_CACHE_PREFIX}:{user_id}:calendar:'
+        f'{month_part}:{year_part}'
+    )
+
+
+async def _invalidate_notes_cache(user_id: int) -> None:
+    """Сбросить все кешированные данные заметок пользователя."""
+    await redis_service.invalidate(f'{NOTES_CACHE_PREFIX}:{user_id}:*')
 
 NOTE_EXAMPLE = {
     'id': 1,
@@ -133,15 +175,32 @@ async def get_notes_list(
         description='Максимальное количество заметок в ответе',
     ),
 ) -> NotesList:
+    cache_key = _get_notes_list_cache_key(
+        user_id=current_user_id,
+        note_date=note_date,
+        offset=offset,
+        limit=limit,
+    )
+    cached_notes = await redis_service.get(cache_key)
+    if cached_notes is not None:
+        return NOTES_LIST_TYPE_ADAPTER.validate_json(cached_notes)
+
     notes = await get_notes(
         user_id=current_user_id,
         note_date=note_date,
         offset=offset,
         limit=limit,
     )
-    return NotesList(
+    notes_list = NotesList(
         notes=[NoteRead.model_validate(note) for note in notes],
     )
+
+    await redis_service.set(
+        key=cache_key,
+        value=notes_list.model_dump_json(),
+        ttl=NOTES_CACHE_TTL_SECONDS,
+    )
+    return notes_list
 
 
 @core_router.get(
@@ -192,15 +251,35 @@ async def get_notes_calendar(
         description='Фильтр по году',
     ),
 ) -> list[CalendarNoteDate]:
+    cache_key = _get_calendar_cache_key(
+        user_id=current_user_id,
+        month=month,
+        year=year,
+    )
+    cached_calendar_dates = await redis_service.get(cache_key)
+    if cached_calendar_dates is not None:
+        return CALENDAR_NOTE_DATES_TYPE_ADAPTER.validate_json(
+            cached_calendar_dates,
+        )
+
     calendar_dates = await get_calendar_note_dates(
         user_id=current_user_id,
         month=month,
         year=year,
     )
-    return [
+    calendar_note_dates = [
         CalendarNoteDate(note_date=note_date, notes_count=notes_count)
         for note_date, notes_count in calendar_dates
     ]
+
+    await redis_service.set(
+        key=cache_key,
+        value=CALENDAR_NOTE_DATES_TYPE_ADAPTER.dump_json(
+            calendar_note_dates,
+        ).decode(),
+        ttl=NOTES_CACHE_TTL_SECONDS,
+    )
+    return calendar_note_dates
 
 
 @core_router.get(
@@ -262,15 +341,32 @@ async def get_notes_by_date(
         description='Максимальное количество заметок в ответе',
     ),
 ) -> NotesList:
+    cache_key = _get_notes_list_cache_key(
+        user_id=current_user_id,
+        note_date=note_date,
+        offset=offset,
+        limit=limit,
+    )
+    cached_notes = await redis_service.get(cache_key)
+    if cached_notes is not None:
+        return NOTES_LIST_TYPE_ADAPTER.validate_json(cached_notes)
+
     notes = await get_notes(
         user_id=current_user_id,
         note_date=note_date,
         offset=offset,
         limit=limit,
     )
-    return NotesList(
+    notes_list = NotesList(
         notes=[NoteRead.model_validate(note) for note in notes],
     )
+
+    await redis_service.set(
+        key=cache_key,
+        value=notes_list.model_dump_json(),
+        ttl=NOTES_CACHE_TTL_SECONDS,
+    )
+    return notes_list
 
 
 @core_router.post(
@@ -311,6 +407,7 @@ async def create_note_item(
         note_data=note_data,
         user_id=current_user_id,
     )
+    await _invalidate_notes_cache(current_user_id)
     return NoteRead.model_validate(note)
 
 
@@ -412,6 +509,7 @@ async def update_note_item(
             detail='Note not found',
         )
 
+    await _invalidate_notes_cache(current_user_id)
     return NoteRead.model_validate(note)
 
 
@@ -465,6 +563,7 @@ async def update_note_status_item(
             detail='Note not found',
         )
 
+    await _invalidate_notes_cache(current_user_id)
     return NoteRead.model_validate(note)
 
 
@@ -504,3 +603,5 @@ async def delete_note_item(
             status_code=status.HTTP_404_NOT_FOUND,
             detail='Note not found',
         )
+
+    await _invalidate_notes_cache(current_user_id)

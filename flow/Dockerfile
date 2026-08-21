@@ -1,17 +1,32 @@
-FROM python:3.12.0-slim as base
+# Базовый официальный образ Python
+FROM python:3.12-slim AS base
 
 WORKDIR /code
 
-FROM base as dep-poetry
-ENV POETRY_HOME /opt/poetry
-RUN python3 -m venv $POETRY_HOME
-RUN $POETRY_HOME/bin/pip install poetry==2.3.1
-ENV POETRY_BIN $POETRY_HOME/bin/poetry
- 
-COPY pyproject.toml poetry.lock ./
-RUN $POETRY_BIN config --local virtualenvs.create false
-RUN $POETRY_BIN install --no-root
+# Настройка переменных окружения для компиляции и байт-кода
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
+ENV PATH="/code/.venv/bin:$PATH"
+
+# Отдельный слой для установки uv и синхронизации зависимостей
+FROM base AS dep-uv
+
+# Устанавливаем uv через официальный автономный скрипт
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+# Копируем только файлы конфигурации пакетов для кэширования слоев
+COPY pyproject.toml uv.lock ./
+
+# Синхронизируем зависимости на основе uv.lock без создания нового venv
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project
+
+# Финальный слой сборки приложения
+FROM dep-uv AS runner
+
+# Копируем исходный код приложения в рабочую директорию
 COPY ./flow/app /code
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0" ,"--port" ,"8000"]
+# Запуск ASGI-сервера uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

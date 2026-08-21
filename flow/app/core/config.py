@@ -35,10 +35,24 @@ class DatabaseSettings(CoreSettings):
         )
 
 
+class RedisSettings(CoreSettings):
+    """Настройки конфигурации брокера сообщений Redis."""
+
+    REDIS_HOST: str = 'localhost'
+    REDIS_PORT: int = 6379
+    REDIS_DB: int = 0
+
+    @property
+    def redis_url(self) -> str:
+        """URL для подключения к базе Redis."""
+        return f'redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}'
+
+
 class Settings(CoreSettings):
     """Общие настройки конфигурации проекта."""
 
     db_settings: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    redis_settings: RedisSettings = RedisSettings()
 
     # 🔐 Добавляем параметры шифрования, общие с сервисом Tasks
     SECRET_KEY: str = 'test_secret_key_for_tests_only_32chars_min'
